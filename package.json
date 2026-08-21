@@ -1,6 +1,6 @@
 {
   "name": "zotero-figure-peek",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "Pinned figure preview for Zotero 9 PDF Reader",
   "scripts": {

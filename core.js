@@ -9,9 +9,14 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const FIGURE_LABEL_PATTERN = "(?:图表|圖表|图|圖|Figures?|Figs?\\.?)";
+  const FIGURE_ZH_LABEL_PATTERN = "(?:示意图|示意圖|流程图|流程圖|附图|附圖|图表|圖表|算法|演算法|清单|清單|图|圖)";
+  const FIGURE_EN_LABEL_PATTERN = "(?:Figures?|Figs?\\.?|Schemes?|Charts?|Algorithms?|Algs?\\.?|Listings?|Lists?\\.?|Boxes?|Plates?)";
+  const FIGURE_LABEL_PATTERN = `(?:${FIGURE_ZH_LABEL_PATTERN}|${FIGURE_EN_LABEL_PATTERN})`;
   const FIGURE_IDENTIFIER_PATTERN = "(?:(?:[Ss]\\s*)?\\d+|[A-Za-z]\\s*[.·\\-–—]\\s*\\d+)(?:\\s*[.·\\-–—]\\s*\\d+)*(?:\\s*\\(\\s*[A-Za-z](?:\\s*[-,–—]\\s*[A-Za-z])*\\s*\\)|[A-Za-z])?";
-  const EQUATION_LABEL_PATTERN = "(?:公式|方程|式|Equations?|Eqs?\\.?|Eqns?\\.?)";
+  const TABLE_ZH_LABEL_PATTERN = "(?:数据表|數據表|表格|表)";
+  const TABLE_EN_LABEL_PATTERN = "(?:Tables?|Tabs?\\.?)";
+  const TABLE_LABEL_PATTERN = `(?:${TABLE_ZH_LABEL_PATTERN}|${TABLE_EN_LABEL_PATTERN})`;
+  const EQUATION_LABEL_PATTERN = "(?:公式|方程|算式|式|Equations?|Eqs?\\.?|Eqns?\\.?|Formulas?|Formula)";
   const EQUATION_IDENTIFIER_PATTERN = "\\d+(?:\\s*[.．]\\s*\\d+)+";
 
   function normalizeText(value) {
@@ -87,7 +92,7 @@
 
     const normalizedLabel = normalizeText(label).toLowerCase();
     const plural = /^(?:figures|figs)/i.test(normalizedLabel);
-    const language = /^(?:图|圖)/u.test(normalizedLabel) ? "zh" : "en";
+    const language = new RegExp(`^${FIGURE_ZH_LABEL_PATTERN}`, "u").test(normalizedLabel) ? "zh" : "en";
 
     text = text.replace(/\s+/g, "").toLowerCase();
     let suffix = "";
@@ -123,7 +128,66 @@
       label: normalizedLabel,
       language,
       plural,
-      display: `${language === "zh" ? "图" : "Figure "}${baseKey}${subparts ? `(${subparts})` : suffix ? `(${suffix})` : ""}`,
+      display: `${displayFigureLabel(normalizedLabel, language)}${baseKey}${subparts ? `(${subparts})` : suffix ? `(${suffix})` : ""}`,
+    };
+  }
+
+  function displayFigureLabel(label, language) {
+    if (language === "zh") {
+      if (/^(?:算法|演算法)/u.test(label)) return "算法";
+      if (/^清单/u.test(label)) return "清单";
+      if (/^附图/u.test(label)) return "附图";
+      if (/^流程图/u.test(label)) return "流程图";
+      if (/^示意图/u.test(label)) return "示意图";
+      return "图";
+    }
+    if (/^scheme/u.test(label)) return "Scheme ";
+    if (/^chart/u.test(label)) return "Chart ";
+    if (/^(?:algorithm|alg\\.)/u.test(label)) return "Algorithm ";
+    if (/^(?:listing|list\\.)/u.test(label)) return "Listing ";
+    if (/^box/u.test(label)) return "Box ";
+    if (/^plate/u.test(label)) return "Plate ";
+    return "Figure ";
+  }
+
+  function canonicalizeTableRef(value, explicitLabel) {
+    let text = normalizeText(value).trim();
+    const labelMatch = text.match(new RegExp(`^(${TABLE_LABEL_PATTERN})`, "iu"));
+    const label = explicitLabel || labelMatch?.[1] || "";
+    if (labelMatch) {
+      text = text.slice(labelMatch[0].length).trim();
+    }
+    text = text.replace(/^[.:：、]+/, "").trim();
+
+    const normalizedLabel = normalizeText(label).toLowerCase();
+    const language = new RegExp(`^${TABLE_ZH_LABEL_PATTERN}`, "u").test(normalizedLabel) ? "zh" : "en";
+    text = text.replace(/\s+/g, "").toLowerCase();
+    let suffix = "";
+    const parenthesizedSuffix = text.match(/\(([a-z])\)$/i);
+    if (parenthesizedSuffix) {
+      suffix = parenthesizedSuffix[1].toLowerCase();
+      text = text.slice(0, parenthesizedSuffix.index);
+    }
+    else {
+      const directSuffix = text.match(/([a-z])$/i);
+      if (directSuffix && !/^s$/i.test(text)) {
+        suffix = directSuffix[1].toLowerCase();
+        text = text.slice(0, -1);
+      }
+    }
+    text = text.replace(/[·-]/g, ".").replace(/\.{2,}/g, ".").replace(/^\.|\.$/g, "");
+    text = text.replace(/^s\.(?=\d)/i, "s");
+    if (!/^(?:(?:s)?\d+|[a-z]\.\d+)(?:\.\d+)*$/i.test(text)) {
+      return null;
+    }
+    return {
+      kind: "table",
+      key: `${text}${suffix}`,
+      baseKey: text,
+      suffix,
+      label: normalizedLabel,
+      language,
+      display: `${language === "zh" ? "表" : "Table "}${text}${suffix ? `(${suffix})` : ""}`,
     };
   }
 
@@ -141,7 +205,7 @@
       return null;
     }
     const normalizedLabel = normalizeText(label).toLowerCase();
-    const language = /^(?:公式|方程|式)/u.test(normalizedLabel) ? "zh" : "en";
+    const language = /^(?:公式|方程|算式|式)/u.test(normalizedLabel) ? "zh" : "en";
     return {
       kind: "equation",
       key: text,
@@ -156,8 +220,8 @@
     const text = normalizeText(value);
     const matches = [];
     const patterns = [
-      { regex: new RegExp(`((?<label>图表|圖表|图|圖)\\s*(?<identifier>${FIGURE_IDENTIFIER_PATTERN}))(?!\\s*[.·\\-–—]\\s*\\d)(?!\\s*\\()(?![A-Za-z0-9_])`, "giu"), leadingGroup: null },
-      { regex: new RegExp(`(^|[^\\p{L}\\p{N}_])((?<label>Figures?|Figs?\\.?)\\s*(?<identifier>${FIGURE_IDENTIFIER_PATTERN}))(?!\\s*[.·\\-–—]\\s*\\d)(?!\\s*\\()(?![\\p{L}\\p{N}_])`, "giu"), leadingGroup: 1 },
+      { regex: new RegExp(`((?<label>${FIGURE_ZH_LABEL_PATTERN})\\s*(?<identifier>${FIGURE_IDENTIFIER_PATTERN}))(?!\\s*[.·\\-–—]\\s*\\d)(?!\\s*\\()(?![A-Za-z0-9_])`, "giu"), leadingGroup: null },
+      { regex: new RegExp(`(^|[^\\p{L}\\p{N}_])((?<label>${FIGURE_EN_LABEL_PATTERN})\\s*(?<identifier>${FIGURE_IDENTIFIER_PATTERN}))(?!\\s*[.·\\-–—]\\s*\\d)(?!\\s*\\()(?![\\p{L}\\p{N}_])`, "giu"), leadingGroup: 1 },
     ];
     for (const { regex, leadingGroup } of patterns) {
       let result;
@@ -181,12 +245,41 @@
     return matches.sort((a, b) => a.start - b.start || b.end - a.end);
   }
 
+  function findTableReferences(value) {
+    const text = normalizeText(value);
+    const matches = [];
+    const patterns = [
+      { regex: new RegExp(`((?<label>${TABLE_ZH_LABEL_PATTERN})\\s*(?<identifier>${FIGURE_IDENTIFIER_PATTERN}))(?!\\s*[.·\\-–—]\\s*\\d)(?!\\s*\\()(?![A-Za-z0-9_])`, "giu"), leadingGroup: null },
+      { regex: new RegExp(`(^|[^\\p{L}\\p{N}_])((?<label>${TABLE_EN_LABEL_PATTERN})\\s*(?<identifier>${FIGURE_IDENTIFIER_PATTERN}))(?!\\s*[.·\\-–—]\\s*\\d)(?!\\s*\\()(?![\\p{L}\\p{N}_])`, "giu"), leadingGroup: 1 },
+    ];
+    for (const { regex, leadingGroup } of patterns) {
+      let result;
+      while ((result = regex.exec(text))) {
+        const leadingLength = leadingGroup ? (result[leadingGroup]?.length || 0) : 0;
+        const full = leadingGroup ? result[2] : result[1];
+        const start = result.index + leadingLength;
+        const ref = canonicalizeTableRef(result.groups.identifier, result.groups.label);
+        if (!ref) {
+          continue;
+        }
+        matches.push({
+          ...ref,
+          raw: full,
+          identifier: result.groups.identifier,
+          start,
+          end: start + full.length,
+        });
+      }
+    }
+    return matches.sort((a, b) => a.start - b.start || b.end - a.end);
+  }
+
   function findEquationReferences(value) {
     const text = normalizeText(value);
     const matches = [];
     const patterns = [
-      { regex: new RegExp(`((?<label>公式|方程|式)\\s*(?:[（(]\\s*)?(?<identifier>${EQUATION_IDENTIFIER_PATTERN})(?:\\s*[）)])?)(?!\\s*[.．]\\s*\\d)(?![A-Za-z0-9_])`, "giu"), leadingGroup: null },
-      { regex: new RegExp(`(^|[^\\p{L}\\p{N}_])((?<label>Equations?|Eqs?\\.?|Eqns?\\.?)\\s*(?:[（(]\\s*)?(?<identifier>${EQUATION_IDENTIFIER_PATTERN})(?:\\s*[）)])?)(?!\\s*[.．]\\s*\\d)(?![\\p{L}\\p{N}_])`, "giu"), leadingGroup: 1 },
+      { regex: new RegExp(`((?<label>公式|方程|算式|式)\\s*(?:[（(]\\s*)?(?<identifier>${EQUATION_IDENTIFIER_PATTERN})(?:\\s*[）)])?)(?!\\s*[.．]\\s*\\d)(?![A-Za-z0-9_])`, "giu"), leadingGroup: null },
+      { regex: new RegExp(`(^|[^\\p{L}\\p{N}_])((?<label>Equations?|Eqs?\\.?|Eqns?\\.?|Formulas?|Formula)\\s*(?:[（(]\\s*)?(?<identifier>${EQUATION_IDENTIFIER_PATTERN})(?:\\s*[）)])?)(?!\\s*[.．]\\s*\\d)(?![\\p{L}\\p{N}_])`, "giu"), leadingGroup: 1 },
     ];
     for (const { regex, leadingGroup } of patterns) {
       let result;
@@ -210,8 +303,13 @@
     return matches.sort((a, b) => a.start - b.start || b.end - a.end);
   }
 
+  function findCaptionReferences(value) {
+    return [...findFigureReferences(value), ...findTableReferences(value)]
+      .sort((a, b) => a.start - b.start || b.end - a.end);
+  }
+
   function findReferences(value) {
-    return [...findFigureReferences(value), ...findEquationReferences(value)]
+    return [...findCaptionReferences(value), ...findEquationReferences(value)]
       .sort((a, b) => a.start - b.start || b.end - a.end);
   }
 
@@ -415,7 +513,7 @@
     for (let i = startIndex + 1; i < Math.min(lines.length, startIndex + 6); i++) {
       const previous = selected[selected.length - 1];
       const current = lines[i];
-      if (!previous.rect || !current.rect || findFigureReferences(current.text).some(match => match.start <= 2)) {
+      if (!previous.rect || !current.rect || findCaptionReferences(current.text).some(match => match.start <= 2)) {
         break;
       }
       const verticalGap = previous.rect[1] - current.rect[3];
@@ -452,7 +550,7 @@
 
   function findCaptionCandidates(pageData, reference, options = {}) {
     const ref = typeof reference === "string" ? canonicalizeFigureRef(reference) : reference;
-    if (!ref) {
+    if (!ref || !["figure", "table"].includes(ref.kind)) {
       return [];
     }
     const pageIndex = Number.isInteger(options.pageIndex)
@@ -462,10 +560,13 @@
     const lines = buildTextLines(pageData);
     const chars = Array.isArray(pageData?.chars) ? pageData.chars : [];
     const candidates = [];
-    const hasFigureListTitle = lines.some(line => /^(?:图目录|圖目錄|插图目录|插圖目錄|图表目录|圖表目錄|list of figures)\s*$/iu.test(line.text.trim()));
+    const referenceFinder = ref.kind === "table" ? findTableReferences : findFigureReferences;
+    const hasReferenceListTitle = ref.kind === "table"
+      ? lines.some(line => /^(?:表目录|表目錄|数据表目录|數據表目錄|list of tables)\s*$/iu.test(line.text.trim()))
+      : lines.some(line => /^(?:图目录|圖目錄|插图目录|插圖目錄|图表目录|圖表目錄|list of figures)\s*$/iu.test(line.text.trim()));
     const captionLikeCount = lines.reduce((count, line) =>
-      count + findFigureReferences(line.text).filter(match => match.start <= Math.max(2, line.text.search(/\S/u) + 1)).length, 0);
-    const figureListPenalty = hasFigureListTitle ? 100 : captionLikeCount >= 6 ? 65 : 0;
+      count + referenceFinder(line.text).filter(match => match.start <= Math.max(2, line.text.search(/\S/u) + 1)).length, 0);
+    const referenceListPenalty = hasReferenceListTitle ? 100 : captionLikeCount >= 6 ? 65 : 0;
 
     function subpartsContain(subparts, suffix) {
       if (!subparts || !suffix) {
@@ -482,7 +583,7 @@
 
     lines.forEach((line, lineIndex) => {
       const firstText = line.text.search(/\S/u);
-      for (const match of findFigureReferences(line.text)) {
+      for (const match of referenceFinder(line.text)) {
         const incompatibleSubparts = ref.subparts && match.subparts && ref.subparts !== match.subparts;
         const incompatibleRefSuffix = ref.suffix && match.subparts && !subpartsContain(match.subparts, ref.suffix);
         const incompatibleMatchSuffix = ref.subparts && match.suffix && !subpartsContain(ref.subparts, match.suffix);
@@ -518,7 +619,7 @@
         score += Math.max(0, 24 - Math.abs(pageIndex - sourcePageIndex) * 4);
         const gapAbove = textGapAbove(lines, lineIndex);
         score += gapAbove > 60 ? 24 : gapAbove > 28 ? 14 : 0;
-        score -= figureListPenalty;
+        score -= referenceListPenalty;
         if (bodyLike) {
           score -= 58;
         }
@@ -542,6 +643,11 @@
       }
     });
     return candidates.sort((a, b) => b.score - a.score || a.lineIndex - b.lineIndex);
+  }
+
+  function findTableCandidates(pageData, reference, options = {}) {
+    const ref = typeof reference === "string" ? canonicalizeTableRef(reference) : reference;
+    return findCaptionCandidates(pageData, ref, options);
   }
 
   function chooseBestCaption(candidates, sourcePageIndex = 0) {
@@ -642,7 +748,7 @@
     }
     const overlap = Math.min(line.rect[2], columnRect[2]) - Math.max(line.rect[0], columnRect[0]);
     const compactText = line.text.replace(/\s+/g, "");
-    if (overlap <= 0 || findFigureReferences(line.text).some(match => match.start <= 2)) {
+    if (overlap <= 0 || findCaptionReferences(line.text).some(match => match.start <= 2)) {
       return false;
     }
     const widthRatio = rectWidth(line.rect) / Math.max(1, rectWidth(columnRect));
@@ -729,8 +835,14 @@
     const nearestAboveGap = aboveLines.length ? Math.max(0, aboveLines[0].rect[1] - captionRect[3]) : Infinity;
     const nearestBelowGap = belowLines.length ? Math.max(0, captionRect[1] - belowLines[0].rect[3]) : Infinity;
     const immediateTextGap = Math.max(45, pageHeight * 0.075);
-    let direction;
-    if (nearestAboveGap <= immediateTextGap && nearestBelowGap <= immediateTextGap) {
+    let direction = options.preferredDirection === "above" || options.preferredDirection === "below"
+      ? options.preferredDirection
+      : null;
+    if (direction) {
+      // Tables conventionally place the title above the content. Callers can
+      // select that known direction without weakening the normal figure logic.
+    }
+    else if (nearestAboveGap <= immediateTextGap && nearestBelowGap <= immediateTextGap) {
       direction = "above";
     }
     else if (nearestBelowGap <= immediateTextGap) {
@@ -809,6 +921,13 @@
     };
   }
 
+  function makeTableCrop(pageData, table, options = {}) {
+    return makeFigureCrop(pageData, table, {
+      ...options,
+      preferredDirection: "below",
+    });
+  }
+
   function makeSearchOrder(currentPageIndex, pageCount) {
     const current = clamp(Number.isInteger(currentPageIndex) ? currentPageIndex : 0, 0, Math.max(0, pageCount - 1));
     const result = [];
@@ -836,17 +955,22 @@
     rectDistance,
     rectsIntersect,
     canonicalizeFigureRef,
+    canonicalizeTableRef,
     canonicalizeEquationRef,
     findFigureReferences,
+    findTableReferences,
+    findCaptionReferences,
     findEquationReferences,
     findReferences,
     buildTextLines,
     findReferenceAtPoint,
     findCaptionCandidates,
+    findTableCandidates,
     findEquationCandidates,
     chooseBestCaption,
     findDestinationOverlay,
     makeFigureCrop,
+    makeTableCrop,
     makeEquationCrop,
     makeSearchOrder,
   };

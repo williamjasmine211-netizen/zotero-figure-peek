@@ -411,7 +411,9 @@
       panel.currentResult = null;
       panel.activeViewState = viewState;
       panel.title.textContent = hit.reference.display;
-      const targetLabel = hit.reference.kind === "equation" ? "公式" : "图注";
+      const targetLabel = hit.reference.kind === "equation"
+        ? "公式"
+        : hit.reference.kind === "table" ? "表题" : "图注";
       this._setPanelLoading(panel, `${hit.reference.display} · 正在定位${targetLabel}…`);
 
       const result = await this._resolveFigure(
@@ -512,7 +514,9 @@
     _makeResult(viewState, pageData, caption, reference) {
       const crop = reference.kind === "equation"
         ? this.core.makeEquationCrop(pageData, caption)
-        : this.core.makeFigureCrop(pageData, caption);
+        : reference.kind === "table"
+          ? this.core.makeTableCrop(pageData, caption)
+          : this.core.makeFigureCrop(pageData, caption);
       const pageRect = this.core.normalizeRect(pageData.viewBox) || [0, 0, 612, 792];
       return {
         viewState,
