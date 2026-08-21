@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Figure Peek 图窗",
-  "version": "0.2.1",
+  "version": "0.2.5",
   "description": "在 Zotero PDF 阅读器中点击图号或公式号，固定预览对应内容。",
   "author": "OpenAI Codex",
   "applications": {

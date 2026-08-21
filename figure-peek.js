@@ -22,6 +22,8 @@
   const PANEL_MAX_HEIGHT = 640;
   const PANEL_MAXIMIZED_TOP = 52;
   const PANEL_ZOOM_LEVELS = [1, 1.25, 1.5, 2, 3, 4];
+  const PANEL_WHEEL_THRESHOLD = 40;
+  const PANEL_SCROLLBAR_HIT_SIZE = 16;
 
   class FigurePeekPlugin {
     constructor({ Zotero, Services, pluginID, rootURI, core }) {
@@ -584,7 +586,8 @@
             font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
           }
           header { height: 38px; flex: 0 0 38px; display: flex; align-items: center; gap: 6px;
-            padding: 0 8px 0 12px; background: rgba(242,242,244,.98); cursor: move; user-select: none; }
+            padding: 0 8px 0 12px; background: rgba(242,242,244,.98); cursor: grab; user-select: none; touch-action: none; }
+          .panel.is-dragging header { cursor: grabbing; }
           .title { min-width: 0; flex: 1; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
           button { appearance: none; border: 0; border-radius: 7px; padding: 5px 8px; color: inherit;
             background: transparent; font: inherit; cursor: pointer; }
@@ -598,6 +601,8 @@
           .image-stage { display: none; width: 100%; height: 100%; min-width: 100%; min-height: 100%;
             align-items: center; justify-content: center; background: #fff; }
           img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
+          .content.is-pannable .image-stage, .content.is-pannable img { cursor: grab; touch-action: none; }
+          .content.is-panning .image-stage, .content.is-panning img { cursor: grabbing; }
           .status { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px;
             color: #555; text-align: center; box-sizing: border-box; }
           .status.error { color: #9f2525; }
@@ -626,7 +631,7 @@
             <button type="button" data-action="maximize" title="放大图窗">放大</button>
             <button type="button" class="close" data-action="close" title="关闭（Esc）" aria-label="关闭">×</button>
           </header>
-          <div class="content"><div class="status">准备中…</div><div class="image-stage"><img alt="对应内容预览"></div></div>
+          <div class="content"><div class="status">准备中…</div><div class="image-stage"><img alt="对应内容预览" draggable="false"></div></div>
           <div class="resize-handle" data-action="resize" title="拖动调整图窗大小" aria-label="调整图窗大小"></div>
         </section>`;
       (doc.body || doc.documentElement).append(host);
@@ -655,6 +660,7 @@
         activeRenderCacheKey: null,
         mode: "figure",
         zoom: 1,
+        wheelRemainder: 0,
         maximized: false,
         restoreBox: null,
         renderID: 0,
@@ -715,24 +721,42 @@
       panel.cleanups.push(() => outerWindow.removeEventListener("keydown", onKeyDown, true));
 
       let drag = null;
+      let pan = null;
       let resize = null;
       const onPointerDown = event => {
-        if (event.button !== 0 || event.target.closest("button")) {
+        if (event.button !== 0 || panel.maximized || event.target.closest("button")) {
           return;
         }
         const rect = panel.host.getBoundingClientRect();
-        drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+        drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+        panel.element.classList.add("is-dragging");
+        panel.header.setPointerCapture?.(event.pointerId);
         event.preventDefault();
+        event.stopPropagation();
       };
       const onPointerMove = event => {
         if (resize) {
+          if (resize.pointerId !== event.pointerId) {
+            return;
+          }
           const width = resize.width + event.clientX - resize.x;
           const height = resize.height + event.clientY - resize.y;
           this._applyPanelSize(panel, width, height, true);
           event.preventDefault();
           return;
         }
+        if (pan) {
+          if (pan.pointerId !== event.pointerId) {
+            return;
+          }
+          this._movePanelPan(panel, pan, event);
+          event.preventDefault();
+          return;
+        }
         if (drag) {
+          if (drag.pointerId !== event.pointerId) {
+            return;
+          }
           const rect = panel.element.getBoundingClientRect();
           const maxLeft = Math.max(PANEL_MARGIN, outerWindow.innerWidth - rect.width - PANEL_MARGIN);
           const maxTop = Math.max(PANEL_MARGIN, outerWindow.innerHeight - rect.height - PANEL_MARGIN);
@@ -741,7 +765,7 @@
         }
       };
       const onPointerUp = event => {
-        if (resize) {
+        if (resize && resize.pointerId === event.pointerId) {
           try { panel.resizeHandle.releasePointerCapture?.(event.pointerId); }
           catch (_) {}
           resize = null;
@@ -750,18 +774,52 @@
           panel.maximizeButton.textContent = "放大";
           this._rememberPanelSize(panel);
         }
-        drag = null;
+        if (pan && pan.pointerId === event.pointerId) {
+          try { panel.content.releasePointerCapture?.(event.pointerId); }
+          catch (_) {}
+          pan = null;
+          panel.content.classList.remove("is-panning");
+        }
+        if (drag && drag.pointerId === event.pointerId) {
+          try { panel.header.releasePointerCapture?.(event.pointerId); }
+          catch (_) {}
+          drag = null;
+          panel.element.classList.remove("is-dragging");
+        }
       };
       const onResizePointerDown = event => {
         if (event.button !== 0) {
           return;
         }
         const rect = panel.element.getBoundingClientRect();
-        resize = { x: event.clientX, y: event.clientY, width: rect.width, height: rect.height };
+        resize = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height };
         panel.resizeHandle.setPointerCapture?.(event.pointerId);
         event.preventDefault();
         event.stopPropagation();
       };
+      const onContentPointerDown = event => {
+        if (
+          event.button !== 0
+          || !panel.currentResult
+          || !panel.image.src
+          || panel.zoom <= 1
+          || !event.target?.closest?.(".image-stage, img")
+        ) {
+          return;
+        }
+        pan = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          left: panel.content.scrollLeft,
+          top: panel.content.scrollTop,
+        };
+        panel.content.classList.add("is-panning");
+        panel.content.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      const onWheel = event => this._handlePanelWheel(panel, event);
       const onDoubleClickImage = () => {
         this._setPanelZoom(panel, panel.zoom === 1 ? 2 : 1);
       };
@@ -780,15 +838,21 @@
       };
       panel.header.addEventListener("pointerdown", onPointerDown);
       panel.resizeHandle.addEventListener("pointerdown", onResizePointerDown);
+      panel.content.addEventListener("pointerdown", onContentPointerDown);
+      panel.content.addEventListener("wheel", onWheel, { passive: false });
       panel.image.addEventListener("dblclick", onDoubleClickImage);
       outerWindow.addEventListener("pointermove", onPointerMove, true);
       outerWindow.addEventListener("pointerup", onPointerUp, true);
+      outerWindow.addEventListener("pointercancel", onPointerUp, true);
       outerWindow.addEventListener("resize", onWindowResize);
       panel.cleanups.push(() => panel.header.removeEventListener("pointerdown", onPointerDown));
       panel.cleanups.push(() => panel.resizeHandle.removeEventListener("pointerdown", onResizePointerDown));
+      panel.cleanups.push(() => panel.content.removeEventListener("pointerdown", onContentPointerDown));
+      panel.cleanups.push(() => panel.content.removeEventListener("wheel", onWheel));
       panel.cleanups.push(() => panel.image.removeEventListener("dblclick", onDoubleClickImage));
       panel.cleanups.push(() => outerWindow.removeEventListener("pointermove", onPointerMove, true));
       panel.cleanups.push(() => outerWindow.removeEventListener("pointerup", onPointerUp, true));
+      panel.cleanups.push(() => outerWindow.removeEventListener("pointercancel", onPointerUp, true));
       panel.cleanups.push(() => outerWindow.removeEventListener("resize", onWindowResize));
     }
 
@@ -906,10 +970,117 @@
       }
     }
 
-    _setPanelZoom(panel, zoom) {
+    _handlePanelWheel(panel, event) {
+      if (!panel || panel.closed || !panel.currentResult || !panel.image?.src || !panel.content) {
+        return false;
+      }
+      const scrollbarAxis = this._getPanelScrollbarAxis(panel, event);
+      if (scrollbarAxis) {
+        const delta = this._getPanelWheelDelta(panel, event, scrollbarAxis);
+        if (!Number.isFinite(delta) || delta === 0) {
+          return false;
+        }
+        panel.wheelRemainder = 0;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        if (scrollbarAxis === "vertical") {
+          const maxScrollTop = Math.max(0, (Number(panel.content.scrollHeight) || 0) - (Number(panel.content.clientHeight) || 0));
+          panel.content.scrollTop = Math.max(0, Math.min(maxScrollTop, (Number(panel.content.scrollTop) || 0) + delta));
+        }
+        else {
+          const maxScrollLeft = Math.max(0, (Number(panel.content.scrollWidth) || 0) - (Number(panel.content.clientWidth) || 0));
+          panel.content.scrollLeft = Math.max(0, Math.min(maxScrollLeft, (Number(panel.content.scrollLeft) || 0) + delta));
+        }
+        return true;
+      }
+      const delta = this._getPanelWheelDelta(panel, event, "vertical");
+      if (!Number.isFinite(delta) || delta === 0) {
+        return false;
+      }
+      const total = (Number(panel.wheelRemainder) || 0) + delta;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (Math.abs(total) < PANEL_WHEEL_THRESHOLD) {
+        panel.wheelRemainder = total;
+        return true;
+      }
+      panel.wheelRemainder = 0;
+      const rect = panel.content.getBoundingClientRect();
+      this._stepPanelZoom(panel, total < 0 ? 1 : -1, {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      });
+      return true;
+    }
+
+    _getPanelWheelDelta(panel, event, axis) {
+      const mode = Number(event?.deltaMode) || 0;
+      const multiplier = mode === 1 ? 16 : (mode === 2 ? panel.content.clientHeight || 640 : 1);
+      const verticalDelta = Number(event?.deltaY);
+      const horizontalDelta = Number(event?.deltaX);
+      const rawDelta = axis === "horizontal" && Number.isFinite(horizontalDelta) && horizontalDelta !== 0
+        ? horizontalDelta
+        : verticalDelta;
+      return rawDelta * multiplier;
+    }
+
+    _movePanelPan(panel, pan, event) {
+      const content = panel?.content;
+      if (!content || !pan || !event) {
+        return false;
+      }
+      const maxScrollLeft = Math.max(0, (Number(content.scrollWidth) || 0) - (Number(content.clientWidth) || 0));
+      const maxScrollTop = Math.max(0, (Number(content.scrollHeight) || 0) - (Number(content.clientHeight) || 0));
+      const nextLeft = (Number(pan.left) || 0) - ((Number(event.clientX) || 0) - (Number(pan.x) || 0));
+      const nextTop = (Number(pan.top) || 0) - ((Number(event.clientY) || 0) - (Number(pan.y) || 0));
+      content.scrollLeft = Math.max(0, Math.min(maxScrollLeft, nextLeft));
+      content.scrollTop = Math.max(0, Math.min(maxScrollTop, nextTop));
+      return true;
+    }
+
+    _getPanelScrollbarAxis(panel, event) {
+      const content = panel?.content;
+      const rect = content?.getBoundingClientRect?.();
+      if (!content || !rect) {
+        return null;
+      }
+      const width = Number(rect.width) || Number(content.offsetWidth) || Number(content.clientWidth) || 0;
+      const height = Number(rect.height) || Number(content.offsetHeight) || Number(content.clientHeight) || 0;
+      const pointX = Number(event?.clientX) - Number(rect.left);
+      const pointY = Number(event?.clientY) - Number(rect.top);
+      if (!Number.isFinite(pointX) || !Number.isFinite(pointY) || pointX < 0 || pointY < 0 || pointX > width || pointY > height) {
+        return null;
+      }
+      const clientWidth = Number(content.clientWidth) || width;
+      const clientHeight = Number(content.clientHeight) || height;
+      const hasVerticalScroll = (Number(content.scrollHeight) || clientHeight) > clientHeight;
+      const hasHorizontalScroll = (Number(content.scrollWidth) || clientWidth) > clientWidth;
+      // Firefox may render overlay scrollbars without subtracting their size from
+      // clientWidth/clientHeight. Keep a narrow edge hit area for that case.
+      const verticalScrollbarWidth = hasVerticalScroll
+        ? Math.max(PANEL_SCROLLBAR_HIT_SIZE, (Number(content.offsetWidth) || width) - clientWidth)
+        : 0;
+      const horizontalScrollbarHeight = hasHorizontalScroll
+        ? Math.max(PANEL_SCROLLBAR_HIT_SIZE, (Number(content.offsetHeight) || height) - clientHeight)
+        : 0;
+      const overVerticalScrollbar = hasVerticalScroll
+        && verticalScrollbarWidth > 0
+        && pointX >= width - verticalScrollbarWidth
+        && pointY < height - horizontalScrollbarHeight;
+      const overHorizontalScrollbar = hasHorizontalScroll
+        && horizontalScrollbarHeight > 0
+        && pointY >= height - horizontalScrollbarHeight;
+      if (overVerticalScrollbar) {
+        return "vertical";
+      }
+      return overHorizontalScrollbar ? "horizontal" : null;
+    }
+
+    _setPanelZoom(panel, zoom, anchor = null) {
       if (!panel || panel.closed) {
         return;
       }
+      const previousZoom = Number(panel.zoom) || 1;
       const safeZoom = PANEL_ZOOM_LEVELS.reduce((best, level) => (
         Math.abs(level - Number(zoom)) < Math.abs(best - Number(zoom)) ? level : best
       ), PANEL_ZOOM_LEVELS[0]);
@@ -918,6 +1089,7 @@
       panel.imageStage.style.height = `${safeZoom * 100}%`;
       panel.zoomResetButton.textContent = safeZoom === 1 ? "适配" : `${Math.round(safeZoom * 100)}%`;
       const ready = Boolean(panel.currentResult && panel.image.src);
+      panel.content?.classList?.toggle("is-pannable", ready && safeZoom > 1);
       panel.zoomOutButton.disabled = !ready || safeZoom <= PANEL_ZOOM_LEVELS[0];
       panel.zoomInButton.disabled = !ready || safeZoom >= PANEL_ZOOM_LEVELS.at(-1);
       panel.zoomResetButton.disabled = !ready || safeZoom === 1;
@@ -925,12 +1097,24 @@
         panel.content.scrollLeft = 0;
         panel.content.scrollTop = 0;
       }
+      else if (anchor && previousZoom > 0) {
+        const pointX = Math.max(0, Number(anchor.x) || 0);
+        const pointY = Math.max(0, Number(anchor.y) || 0);
+        const imageX = (panel.content.scrollLeft + pointX) / previousZoom;
+        const imageY = (panel.content.scrollTop + pointY) / previousZoom;
+        panel.content.scrollLeft = Math.max(0, imageX * safeZoom - pointX);
+        panel.content.scrollTop = Math.max(0, imageY * safeZoom - pointY);
+      }
     }
 
-    _stepPanelZoom(panel, direction) {
+    _stepPanelZoom(panel, direction, anchor = null) {
       const currentIndex = Math.max(0, PANEL_ZOOM_LEVELS.indexOf(panel.zoom));
       const nextIndex = Math.max(0, Math.min(PANEL_ZOOM_LEVELS.length - 1, currentIndex + direction));
-      this._setPanelZoom(panel, PANEL_ZOOM_LEVELS[nextIndex]);
+      if (nextIndex === currentIndex) {
+        return false;
+      }
+      this._setPanelZoom(panel, PANEL_ZOOM_LEVELS[nextIndex], anchor);
+      return true;
     }
 
     _fitPanelToRenderedImage(panel, rendered) {
@@ -1437,5 +1621,7 @@
   }
 
   FigurePeekPlugin.SINGLE_CLICK_DELAY = SINGLE_CLICK_DELAY;
+  FigurePeekPlugin.PANEL_WHEEL_THRESHOLD = PANEL_WHEEL_THRESHOLD;
+  FigurePeekPlugin.PANEL_SCROLLBAR_HIT_SIZE = PANEL_SCROLLBAR_HIT_SIZE;
   return FigurePeekPlugin;
 });

@@ -408,7 +408,11 @@
 
   function captionContinuation(lines, startIndex) {
     const selected = [lines[startIndex]];
-    for (let i = startIndex + 1; i < Math.min(lines.length, startIndex + 4); i++) {
+    const anchor = lines[startIndex];
+    const anchorCenter = (anchor.rect[0] + anchor.rect[2]) / 2;
+    // Long captions often wrap as centred lines. Their left edges can differ
+    // substantially even though they belong to the same caption block.
+    for (let i = startIndex + 1; i < Math.min(lines.length, startIndex + 6); i++) {
       const previous = selected[selected.length - 1];
       const current = lines[i];
       if (!previous.rect || !current.rect || findFigureReferences(current.text).some(match => match.start <= 2)) {
@@ -416,8 +420,10 @@
       }
       const verticalGap = previous.rect[1] - current.rect[3];
       const fontSize = Math.max(previous.averageFontSize || 10, current.averageFontSize || 10);
-      const leftAligned = Math.abs(current.rect[0] - lines[startIndex].rect[0]) < fontSize * 2.5;
-      if (verticalGap < -fontSize * 0.5 || verticalGap > fontSize * 1.8 || !leftAligned || previous.paragraphBreakAfter) {
+      const currentCenter = (current.rect[0] + current.rect[2]) / 2;
+      const leftAligned = Math.abs(current.rect[0] - anchor.rect[0]) < fontSize * 2.5;
+      const centered = Math.abs(currentCenter - anchorCenter) < fontSize * 3;
+      if (verticalGap < -fontSize * 0.5 || verticalGap > fontSize * 1.8 || (!leftAligned && !centered) || previous.paragraphBreakAfter) {
         break;
       }
       selected.push(current);
