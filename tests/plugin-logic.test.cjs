@@ -84,7 +84,7 @@ test("plugin resolves an equation reference to the displayed equation region", a
   assert.ok(result.figureRect[2] - result.figureRect[0] > 500);
 });
 
-test("high-Bing regression: a page-75 reference can find the page-45 Figure 3.4 caption", async () => {
+test("long-distance regression: a page-75 reference can find the page-45 Figure 3.4 caption", async () => {
   const pages = Array.from({ length: 80 }, (_, pageIndex) => page([], pageIndex));
   pages[45] = page([
     { text: "图 3.4 存在显著聚合物残留的阵列管样品的 SEM 图像。", x: 90, y: 300 },
@@ -204,6 +204,178 @@ test("non-PDF readers are ignored without creating lifecycle state", async () =>
 
 test("single-click delay covers the plugin's 340ms double-click window", () => {
   assert.ok(FigurePeekPlugin.SINGLE_CLICK_DELAY >= 340);
+});
+
+test("wheel over a preview performs an anchored zoom and blocks PDF scrolling", () => {
+  const { plugin } = makePlugin([]);
+  const calls = [];
+  plugin._stepPanelZoom = (panel, direction, anchor) => calls.push({ panel, direction, anchor });
+  let prevented = 0;
+  let stopped = 0;
+  const panel = {
+    closed: false,
+    currentResult: {},
+    image: { src: "data:image/png;base64,TEST" },
+    wheelRemainder: 0,
+    content: {
+      clientWidth: 360,
+      clientHeight: 360,
+      offsetWidth: 360,
+      offsetHeight: 360,
+      scrollHeight: 360,
+      scrollWidth: 360,
+      getBoundingClientRect() { return { left: 20, top: 30, width: 360, height: 360 }; },
+    },
+  };
+  const event = {
+    deltaY: -100,
+    deltaMode: 0,
+    clientX: 95,
+    clientY: 110,
+    preventDefault() { prevented++; },
+    stopPropagation() { stopped++; },
+  };
+  assert.equal(plugin._handlePanelWheel(panel, event), true);
+  assert.deepEqual(calls, [{ panel, direction: 1, anchor: { x: 75, y: 80 } }]);
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 1);
+});
+
+test("fine wheel deltas accumulate before changing preview zoom", () => {
+  const { plugin } = makePlugin([]);
+  let zoomCalls = 0;
+  plugin._stepPanelZoom = () => { zoomCalls++; };
+  const panel = {
+    closed: false,
+    currentResult: {},
+    image: { src: "data:image/png;base64,TEST" },
+    wheelRemainder: 0,
+    content: {
+      clientWidth: 360,
+      clientHeight: 360,
+      offsetWidth: 360,
+      offsetHeight: 360,
+      scrollHeight: 360,
+      scrollWidth: 360,
+      getBoundingClientRect() { return { left: 0, top: 0, width: 360, height: 360 }; },
+    },
+  };
+  const event = deltaY => ({
+    deltaY,
+    deltaMode: 0,
+    clientX: 50,
+    clientY: 50,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  plugin._handlePanelWheel(panel, event(-15));
+  assert.equal(zoomCalls, 0);
+  assert.equal(panel.wheelRemainder, -15);
+  plugin._handlePanelWheel(panel, event(-30));
+  assert.equal(zoomCalls, 1);
+  assert.equal(panel.wheelRemainder, 0);
+  assert.equal(FigurePeekPlugin.PANEL_WHEEL_THRESHOLD, 40);
+});
+
+test("wheel over the right scrollbar scrolls vertically instead of zooming", () => {
+  const { plugin } = makePlugin([]);
+  let zoomCalls = 0;
+  plugin._stepPanelZoom = () => { zoomCalls++; };
+  let prevented = 0;
+  const panel = {
+    closed: false,
+    currentResult: {},
+    image: { src: "data:image/png;base64,TEST" },
+    wheelRemainder: 17,
+    content: {
+      clientWidth: 400,
+      clientHeight: 300,
+      offsetWidth: 400,
+      offsetHeight: 300,
+      scrollWidth: 760,
+      scrollHeight: 700,
+      scrollLeft: 10,
+      scrollTop: 80,
+      getBoundingClientRect() { return { left: 20, top: 30, width: 400, height: 300 }; },
+    },
+  };
+  const event = {
+    deltaY: 120,
+    deltaX: 0,
+    deltaMode: 0,
+    clientX: 405,
+    clientY: 120,
+    preventDefault() { prevented++; },
+    stopPropagation() {},
+  };
+  assert.equal(plugin._handlePanelWheel(panel, event), true);
+  assert.equal(panel.content.scrollTop, 200);
+  assert.equal(panel.content.scrollLeft, 10);
+  assert.equal(panel.wheelRemainder, 0);
+  assert.equal(zoomCalls, 0);
+  assert.equal(prevented, 1);
+});
+
+test("wheel over the bottom scrollbar scrolls horizontally instead of zooming", () => {
+  const { plugin } = makePlugin([]);
+  let zoomCalls = 0;
+  plugin._stepPanelZoom = () => { zoomCalls++; };
+  const panel = {
+    closed: false,
+    currentResult: {},
+    image: { src: "data:image/png;base64,TEST" },
+    wheelRemainder: -12,
+    content: {
+      clientWidth: 400,
+      clientHeight: 300,
+      offsetWidth: 400,
+      offsetHeight: 300,
+      scrollWidth: 760,
+      scrollHeight: 700,
+      scrollLeft: 90,
+      scrollTop: 40,
+      getBoundingClientRect() { return { left: 20, top: 30, width: 400, height: 300 }; },
+    },
+  };
+  const event = {
+    deltaY: 120,
+    deltaX: 0,
+    deltaMode: 0,
+    clientX: 180,
+    clientY: 326,
+    preventDefault() {},
+    stopPropagation() {},
+  };
+  assert.equal(plugin._handlePanelWheel(panel, event), true);
+  assert.equal(panel.content.scrollLeft, 210);
+  assert.equal(panel.content.scrollTop, 40);
+  assert.equal(panel.wheelRemainder, 0);
+  assert.equal(zoomCalls, 0);
+  assert.equal(FigurePeekPlugin.PANEL_SCROLLBAR_HIT_SIZE, 16);
+});
+
+test("drag panning follows the pointer and stays within the enlarged image", () => {
+  const { plugin } = makePlugin([]);
+  const panel = {
+    content: {
+      clientWidth: 400,
+      clientHeight: 300,
+      scrollWidth: 760,
+      scrollHeight: 700,
+      scrollLeft: 0,
+      scrollTop: 0,
+    },
+  };
+  const pan = { x: 240, y: 180, left: 180, top: 220 };
+  assert.equal(plugin._movePanelPan(panel, pan, { clientX: 120, clientY: 80 }), true);
+  assert.equal(panel.content.scrollLeft, 300);
+  assert.equal(panel.content.scrollTop, 320);
+  plugin._movePanelPan(panel, pan, { clientX: 700, clientY: 650 });
+  assert.equal(panel.content.scrollLeft, 0);
+  assert.equal(panel.content.scrollTop, 0);
+  plugin._movePanelPan(panel, pan, { clientX: -900, clientY: -900 });
+  assert.equal(panel.content.scrollLeft, 360);
+  assert.equal(panel.content.scrollTop, 400);
 });
 
 test("canceling a panel render stops its task and evicts the pending cache entry", () => {

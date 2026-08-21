@@ -209,6 +209,21 @@ test("rejects a conflicting subfigure range but accepts the base caption", () =>
   assert.equal(candidates[0].match.key, "3");
 });
 
+test("keeps every line of a centred multi-line figure caption", () => {
+  const page = pageWithLines([
+    { text: "图3.4 这是一个较长图注的第一行说明", x: 120, y: 350, width: 8 },
+    { text: "第二行继续说明图像的实验条件", x: 160, y: 336, width: 8 },
+    { text: "第三行给出统计结果和误差范围", x: 152, y: 322, width: 8 },
+    { text: "这一行是图注之后的正文内容，不能被并入图注。", x: 45, y: 285, width: 8, paragraph: true },
+  ]);
+  const reference = core.findFigureReferences("图3.4")[0];
+  const caption = core.findCaptionCandidates(page, reference)[0];
+  assert.match(caption.text, /第二行继续/u);
+  assert.match(caption.text, /第三行给出/u);
+  assert.doesNotMatch(caption.text, /图注之后的正文/u);
+  assert.ok(caption.rect[1] <= 322, "the caption rectangle should include its last line");
+});
+
 test("crops the figure above a conventional below-figure caption", () => {
   const page = pageWithLines([
     { text: "正文行正文行正文行正文行正文行正文行正文行", x: 45, y: 720, width: 8 },
