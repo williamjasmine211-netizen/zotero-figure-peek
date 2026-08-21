@@ -1,0 +1,5 @@
+# 在各平台统一保存为 LF，避免源码与打包内容出现无意义的换行差异
+* text=auto eol=lf
+
+# XPI 为二进制包；正常情况下由 .gitignore 排除
+*.xpi binary

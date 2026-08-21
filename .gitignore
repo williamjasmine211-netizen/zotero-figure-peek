@@ -1,0 +1,17 @@
+# 依赖由 npm 根据 package.json / package-lock.json 重新安装
+node_modules/
+
+# 构建产物：建议作为 GitHub Release 附件发布，而非提交到源码仓库
+dist/
+*.xpi
+
+# 测试与编辑器临时文件
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+# 本地环境文件（若后续新增）
+.env
+.env.*
+!.env.example

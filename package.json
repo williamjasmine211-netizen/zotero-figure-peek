@@ -1,0 +1,10 @@
+{
+  "name": "zotero-figure-peek",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Pinned figure preview for Zotero 9 PDF Reader",
+  "scripts": {
+    "test": "node --test \"tests/*.test.cjs\"",
+    "build": "python scripts/build_xpi.py"
+  }
+}
