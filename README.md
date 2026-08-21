@@ -34,14 +34,6 @@ npm run build
 
 `dist/` 不提交到源码仓库；发布新版本时，应把其中生成的 XPI 作为 GitHub Release 的附件上传。
 
-## 高冰论文回归样本
-
-- 图3.2：PDF 第43页引用，目标在第44页。
-- 图3.3：PDF 第44页引用，目标在第45页。
-- 图3.4：目标与多处引用同在 PDF 第46页；PDF 第76页还有一次相距30页的远距离引用。
-
-自动化回归覆盖了图3.4从 PDF.js `pageIndex=75` 回查 `pageIndex=45`、有/无空格图号、中英文图注、单栏通栏裁剪与全文扫描的有界缓存。
-
 ## 已知边界
 
 - 扫描件必须先有 OCR 文本层，插件才能读取图号和图注。
@@ -57,3 +49,4 @@ npm run build
 ```
 
 构建结果位于 `dist/figure-peek-<version>.xpi`。XPI 根目录直接包含 `manifest.json`、`bootstrap.js`、`core.js`、`figure-peek.js` 和 `renderer-bridge.js`。
+
