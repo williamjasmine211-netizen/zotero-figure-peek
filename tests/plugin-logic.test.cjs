@@ -84,6 +84,25 @@ test("plugin resolves an equation reference to the displayed equation region", a
   assert.ok(result.figureRect[2] - result.figureRect[0] > 500);
 });
 
+test("plugin resolves a table reference and uses the table-below-title crop", async () => {
+  const pages = [
+    page([{ text: "结果如表3.4所示。", y: 500 }], 0),
+    page([
+      { text: "上方正文形成表格区域边界并且文字长度足够。", y: 730 },
+      { text: "表3.4 不同工艺参数下的测试结果", x: 95, y: 620 },
+      { text: "温度       强度       延伸率", x: 105, y: 570 },
+      { text: "800        520        15.6", x: 105, y: 545 },
+    ], 1),
+  ];
+  const { plugin, viewState } = makePlugin(pages);
+  const reference = core.findTableReferences("表3.4")[0];
+  const result = await plugin._resolveFigure(viewState, 0, { reference }, null, () => {}, () => false);
+  assert.equal(result.pageIndex, 1);
+  assert.equal(result.reference.kind, "table");
+  assert.equal(result.crop.direction, "below");
+  assert.ok(result.figureRect[1] < result.caption.rect[1]);
+});
+
 test("long-distance regression: a page-75 reference can find the page-45 Figure 3.4 caption", async () => {
   const pages = Array.from({ length: 80 }, (_, pageIndex) => page([], pageIndex));
   pages[45] = page([

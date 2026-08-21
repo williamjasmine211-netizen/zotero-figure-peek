@@ -108,6 +108,8 @@ test("recognizes Chinese and English equation references", () => {
     ["Equation (3.8) gives the result", "3.8"],
     ["See Eq. 3.8 for details", "3.8"],
     ["See Eqns. (3.8) for details", "3.8"],
+    ["Formula (3.8) is used below", "3.8"],
+    ["算式（3.8）说明了这一点", "3.8"],
   ]);
   for (const [text, key] of samples) {
     const matches = core.findEquationReferences(text);
@@ -115,6 +117,56 @@ test("recognizes Chinese and English equation references", () => {
     assert.equal(matches[0].kind, "equation", text);
     assert.equal(matches[0].key, key, text);
   }
+});
+
+test("recognizes Chinese, English, compact and supplementary table references", () => {
+  const samples = new Map([
+    ["参数见表3.4", "3.4"],
+    ["表格 ３－４（a）给出了结果", "3.4a"],
+    ["See Table3.4 for details", "3.4"],
+    ["See Tab. S3 for the full data", "s3"],
+    ["See Table A-2 for the appendix", "a.2"],
+  ]);
+  for (const [text, key] of samples) {
+    const matches = core.findTableReferences(text);
+    assert.equal(matches.length, 1, text);
+    assert.equal(matches[0].kind, "table", text);
+    assert.equal(matches[0].key, key, text);
+  }
+  assert.deepEqual(core.findFigureReferences("表3.4给出了参数"), []);
+});
+
+test("recognizes figure-like captions used by other paper genres", () => {
+  const samples = new Map([
+    ["见算法2.1", "算法2.1"],
+    ["See Scheme 2.1", "Scheme 2.1"],
+    ["See Algorithm 4", "Algorithm 4"],
+    ["见流程图3.2", "流程图3.2"],
+    ["See Listing 5.1", "Listing 5.1"],
+  ]);
+  for (const [text, display] of samples) {
+    const matches = core.findFigureReferences(text);
+    assert.equal(matches.length, 1, text);
+    assert.equal(matches[0].kind, "figure", text);
+    assert.equal(matches[0].display, display, text);
+  }
+});
+
+test("finds a table title, rejects a list-of-tables leader, and crops below the title", () => {
+  const page = pageWithLines([
+    { text: "上段正文用于形成表格的上边界，文字长度足够。", x: 45, y: 730, width: 8 },
+    { text: "表3.4 不同工艺参数下的测试结果", x: 95, y: 620, width: 8 },
+    { text: "温度       强度       延伸率", x: 105, y: 570, width: 8 },
+    { text: "800        520        15.6", x: 105, y: 545, width: 8 },
+    { text: "表3.4 ........ 57", x: 45, y: 100, width: 8 },
+  ]);
+  const candidates = core.findTableCandidates(page, "表3.4", { pageIndex: 2, sourcePageIndex: 2 });
+  assert.equal(candidates.length, 1);
+  assert.match(candidates[0].text, /^表3\.4/u);
+  const crop = core.makeTableCrop(page, candidates[0]);
+  assert.equal(crop.direction, "below");
+  assert.ok(crop.rect[3] >= candidates[0].rect[3]);
+  assert.ok(crop.rect[1] < candidates[0].rect[1]);
 });
 
 test("finds a displayed equation rather than a prose equation citation", () => {
